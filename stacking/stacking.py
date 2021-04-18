@@ -17,8 +17,8 @@ from matplotlib.patches import Polygon
 from scipy.stats import median_abs_deviation
 from tqdm.auto import tqdm
 
-from utils.ecf import ECF
 from .. import rapidxmm
+from ecf import ECF
 
 
 plt.rc('font', family='serif')
