@@ -18,7 +18,7 @@ from scipy.stats import median_abs_deviation
 from tqdm.auto import tqdm
 
 from .. import rapidxmm
-from ecf import ECF
+from .ecf import ECF
 
 
 plt.rc('font', family='serif')
@@ -42,11 +42,31 @@ def get_neighbours(npixel, hp, level=5):
     sorted_neighbours = Table()
     sorted_neighbours["npixel"] = npixel_neighbours
     sorted_neighbours["order"] = range(len(npixel_neighbours))
-    
+
     sorted_neighbours = unique(sorted_neighbours, keys=["npixel"])
     sorted_neighbours.sort("order")
 
     return sorted_neighbours
+
+
+def get_rapidxmm_data(npixels, obstype="pointed", instrum="PN", max_size=150):
+    kk = rapidxmm.query_npixels(
+        npixels, obstype=obstype, instrum=instrum
+    )
+    print(kk)
+    return
+
+    npixels_segments = np.split(
+        npixels, np.arange(max_size, len(npixels), max_size)
+    )
+
+    data = []
+    for npixels_segment in npixels_segments:
+        print(len(npixels_segment))
+        # data.append(
+        #    rapidxmm.query_npixels(
+        #     npixels_segment, obstype=obstype, instrum=instrum
+        # )
 
 
 def coords_random_kick(coords, moc=None, r_min=60*u.arcsec, r_max=120*u.arcsec):
@@ -105,7 +125,7 @@ def get_bkg_data(npixel, obsid, level_neighbours, moc_masked_sources, hp, ntries
         )
 
         if len(bkg_data) == 0:
-            # No data for this position, we try again 
+            # No data for this position, we try again
             # by generating a new random position
             continue
 
@@ -133,10 +153,10 @@ def stats_bootstrap(src, bkg, exp, ecf, nsim=1000):
     # mexp = np.zeros((nsim, npixels, nbands))
 
     for i in range(nsim):
-        idx_sample = np.random.randint(nstack, size=nstack)                
+        idx_sample = np.random.randint(nstack, size=nstack)
         cr[i, :, :] = (
             (
-                np.sum(src[idx_sample, :, :], axis=0) - 
+                np.sum(src[idx_sample, :, :], axis=0) -
                 np.sum(bkg[idx_sample, :, :], axis=0)
             ) / np.sum(exp[idx_sample, :, :], axis=0)
         )
@@ -147,7 +167,7 @@ def stats_bootstrap(src, bkg, exp, ecf, nsim=1000):
         )
         snr[i, :, :] = (
             (
-                np.sum(src[idx_sample, :, :], axis=0) - 
+                np.sum(src[idx_sample, :, :], axis=0) -
                 np.sum(bkg[idx_sample, :, :], axis=0)
             ) / np.sqrt(np.sum(src[idx_sample, :, :], axis=0))
         )
@@ -155,7 +175,7 @@ def stats_bootstrap(src, bkg, exp, ecf, nsim=1000):
         # msrc[i, :, :] = np.sum(src[idx_sample, :, :], axis=0)
         # mbkg[i, :, :] = np.sum(bkg[idx_sample, :, :], axis=0)
         # mexp[i, :, :] = np.sum(exp[idx_sample, :, :], axis=0)
-    
+
     cr_median = np.nanmedian(cr, axis=0)
     snr_median = np.nanmedian(snr, axis=0)
     ecf_median = np.nanmedian(ecf_sample, axis=0)
@@ -177,7 +197,7 @@ def stats_bootstrap(src, bkg, exp, ecf, nsim=1000):
         snr_mad[:, i] = median_abs_deviation(snr[:, :, i], axis=0, nan_policy="omit", scale="normal")
 
     return cr_median, cr_mad, snr_median, snr_mad, ecf_median
-    
+
 
 def flux_bootstrap(src_flux, src_flux_err, bkg_flux, bkg_flux_err, nsim=1000):
     nstack, nbands = src_flux.shape
@@ -185,21 +205,21 @@ def flux_bootstrap(src_flux, src_flux_err, bkg_flux, bkg_flux_err, nsim=1000):
     flux_err = np.zeros((nsim, nbands))
 
     for i in range(nsim):
-        idx_sample = np.random.randint(nstack, size=nstack)  
-    
+        idx_sample = np.random.randint(nstack, size=nstack)
+
         ngood = np.zeros(nbands, dtype=int)
         for j in range(nbands):
             good_idx = np.where(np.isfinite(src_flux[idx_sample, j]))
             ngood[j] = len(good_idx[0])
 
         flux[i, :] = (
-            np.nansum(src_flux[idx_sample, :], axis=0) - 
+            np.nansum(src_flux[idx_sample, :], axis=0) -
             np.nansum(bkg_flux[idx_sample, :], axis=0)
         )  / ngood
 
         flux_err[i, :] = np.sqrt(
             np.nansum(
-                src_flux_err[idx_sample, :]**2 + 
+                src_flux_err[idx_sample, :]**2 +
                 bkg_flux_err[idx_sample, :]**2,
                 axis=0
             )
@@ -208,7 +228,7 @@ def flux_bootstrap(src_flux, src_flux_err, bkg_flux, bkg_flux_err, nsim=1000):
     flux_median = np.median(flux, axis=0)
     flux_err_median = np.median(flux_err, axis=0)
     flux_mad = median_abs_deviation(flux, axis=0, scale="normal")
-    
+
     return flux_median, flux_mad
 
 
@@ -224,7 +244,7 @@ def print_stats(cr, cr_err, snr, snr_err, flux, flux_err, ebands=["6", "7", "8"]
         idx_max = np.argmax(snr[:, i])
         snr_peak = snr[idx_max, i]
         snr_peak_mad = snr_err[idx_max, i]
-        
+
         color_print(f"Energy band {eband}:", "white")
         print(f"Median net CR at peak: {cr_peak:.01e} ± {cr_peak_mad:.01e} counts/s")
 
@@ -239,7 +259,7 @@ def print_params(parnames, params):
     color_print("\nAverage parameters", "yellow")
     color_print("------------------", "yellow")
     color_print("Weighted by number of repetitions in the stack")
-    
+
     average_params = np.median(params, axis=0)
     for name, par in zip(parnames, average_params):
         color_print(f"{name}: {par:.04f}", "white")
@@ -247,35 +267,45 @@ def print_params(parnames, params):
     return average_params
 
 
-def plot_stack(npixels, hp, cr, snr, filename=None):
+def plot_stack(npixels, hp, cr, snr, filename=None, scale=None):
     lon, lat = hp.healpix_to_lonlat(npixels)
     boundaries = hp.boundaries_lonlat(npixels, 1)
-    
+
     patches = []
     for blon, blat in zip(*boundaries):
         patches.append(Polygon(np.array([blon.value, blat.value]).T, closed=True))
 
-    vmin_cr, vmax_cr = cr.flatten().min(), cr.flatten().max()
-    vmin_snr, vmax_snr = snr.flatten().min(), snr.flatten().max()
+    if not scale:
+        vmin_cr, vmax_cr = cr.flatten().min(), cr.flatten().max()
+        vmin_snr, vmax_snr = snr.flatten().min(), snr.flatten().max()
+        scale = [vmin_cr, vmax_cr, vmin_snr, vmax_snr]
+    else:
+        vmin_cr, vmax_cr = scale[0], scale[1]
+        vmin_snr, vmax_snr = scale[2], scale[3]
+
     norm_cr = Normalize(vmin=vmin_cr, vmax=vmax_cr)
     norm_snr = Normalize(vmin=vmin_snr, vmax=vmax_snr)
 
-    fig, axs = plt.subplots(2, 3, constrained_layout=False, figsize=(11, 8))
+    fig, axs = plt.subplots(2, 3, constrained_layout=False, figsize=(5.5, 4))
     for i, eband in enumerate(["6", "7", "8"]):
         # Count-rate "images"
-        pcm_cr = axs[0, i].scatter(lon, lat, c=cr[:, i], vmin=vmin_cr, vmax=vmax_cr)
+        pcm_cr = axs[0, i].scatter(
+            lon, lat, c=cr[:, i], s=1, vmin=vmin_cr, vmax=vmax_cr
+        )
 
         p = PatchCollection(patches, alpha=1)
         p.set_array(cr[:, i])
         p.set_norm(norm_cr)
         axs[0, i].add_collection(p)
-        
+
         axs[0, i].set_title(f"Energy band {eband}")
         axs[0, i].set_xticks([])
         axs[0, i].set_yticks([])
 
         # signal-to-noise ratio "images"
-        pcm_snr = axs[1, i].scatter(lon, lat, c=snr[:, i], vmin=vmin_snr, vmax=vmax_snr)
+        pcm_snr = axs[1, i].scatter(
+            lon, lat, c=snr[:, i], s=1, vmin=vmin_snr, vmax=vmax_snr
+        )
 
         p = PatchCollection(patches, alpha=1)
         p.set_array(snr[:, i])
@@ -288,17 +318,19 @@ def plot_stack(npixels, hp, cr, snr, filename=None):
         if i == 0:
             axs[0, i].set_ylabel("Stack net CR (median)")
             axs[1, i].set_ylabel("Stack SNR (median)")
-    
+
     plt.tight_layout()
-    
-    fig.colorbar(pcm_cr, ax=axs[0, :], shrink=0.6, location='bottom', pad=0.01)
-    fig.colorbar(pcm_snr, ax=axs[1, :], shrink=0.6, location='bottom', pad=0.01)
-    
+
+    fig.colorbar(pcm_cr, ax=axs[0, :], shrink=0.6, location='bottom', pad=0.02)
+    fig.colorbar(pcm_snr, ax=axs[1, :], shrink=0.6, location='bottom', pad=0.02)
+
     if filename:
-        fig.savefig(filename)
+        fig.savefig(filename, bbox_inches='tight', pad_inches=0)
         plt.close()
     else:
         plt.show()
+
+    return scale
 
 
 def plot_radial(npixels, level, hp, cr, cr_err, snr, snr_err, filename=None):
@@ -307,7 +339,7 @@ def plot_radial(npixels, level, hp, cr, cr_err, snr, snr_err, filename=None):
     cr_err_radial = np.zeros((level + 1, 3))
     snr_radial = np.zeros((level + 1, 3))
     snr_err_radial = np.zeros((level + 1, 3))
-    
+
     cr_radial[0, :] = cr[0, :]
     cr_err_radial[0, :] = cr_err[0, :]
     snr_radial[0, :] = snr[0, :]
@@ -330,13 +362,13 @@ def plot_radial(npixels, level, hp, cr, cr_err, snr, snr_err, filename=None):
 
 
     fig, axs = plt.subplots(
-        2, 3, sharex=True, constrained_layout=False, figsize=(11, 7)
+        2, 3, sharex=True, constrained_layout=False, figsize=(5.5, 3.5)
     )
     for i, eband in enumerate(["6", "7", "8"]):
         axs[0, i].errorbar(
             radius, cr_radial[:, i], yerr=cr_err_radial[:, i], fmt="o", capsize=2
         )
-        axs[0, i].set_title(f"Energy band {eband}")
+        axs[0, i].set_title(f"Energy band {eband}", size="x-small")
         axs[0, i].set_ylim(cr_min, cr_max)
         axs[0, i].ticklabel_format(axis="y", style="sci", scilimits=(0,0))
         axs[0, i].grid(color='gray', linestyle=':')
@@ -350,7 +382,7 @@ def plot_radial(npixels, level, hp, cr, cr_err, snr, snr_err, filename=None):
         if i == 0:
             axs[0, i].set_ylabel("net counts / s / pixel")
             axs[1, i].set_ylabel("SNR / pixel")
-       
+
     fig.add_subplot(111, frameon=False)
     plt.tick_params(labelcolor='none', top=False, bottom=False, left=False, right=False)
     plt.xlabel("Distance to central npixel")
@@ -359,14 +391,14 @@ def plot_radial(npixels, level, hp, cr, cr_err, snr, snr_err, filename=None):
 
     if filename:
         filename = filename.parent.joinpath(filename.stem + "_radial" +  filename.suffix)
-        fig.savefig(filename)
+        fig.savefig(filename, bbox_inches='tight', pad_inches=0)
         plt.close()
     else:
         plt.show()
-        
+
 
 def stack_npixels(
-    npixels, 
+    npixels,
     level_neighbours=5,
     params=None,
     max_data=1000,
@@ -378,15 +410,16 @@ def stack_npixels(
     order=16,
     with_plots=False,
     plotfile=None,
+    scale=None,
 ):
     ecf_pn = {
         "6": ECF.ecf_det_eband("PN", "6"),
         "7": ECF.ecf_det_eband("PN", "7"),
         "8": ECF.ecf_det_eband("PN", "8"),
     }
-    
+
     num_neighbours = sum([8*k for k in range(level_neighbours + 1)]) + 1
-    
+
     ebands = ["6", "7", "8"]
     src_stack = np.zeros((max_data, num_neighbours, len(ebands)))
     bkg_stack = np.zeros((max_data, num_neighbours, len(ebands)))
@@ -398,7 +431,7 @@ def stack_npixels(
         bkg_flux_center = np.full((max_data, len(ebands)), np.nan)
         src_flux_err_center = np.full((max_data, len(ebands)), np.nan)
         bkg_flux_err_center = np.full((max_data, len(ebands)), np.nan)
-    
+
     if params:
         params_stack = np.zeros((max_data, len(params.colnames)))
 
@@ -407,11 +440,16 @@ def stack_npixels(
     n, nsrc = 0, 0
     for j, npixel in enumerate(tqdm(npixels)):
         sorted_neighbours = get_neighbours(npixel, hp, level=level_neighbours)
-        data = rapidxmm.query_npixels(sorted_neighbours["npixel"], obstype="pointed", instrum="PN")
+        # data = get_rapidxmm_data(
+        #     sorted_neighbours["npixel"], obstype="pointed", instrum="PN"
+        # )
+        data = rapidxmm.query_npixels(
+            sorted_neighbours["npixel"], obstype="pointed", instrum="PN"
+        )
 
         if len(data) == 0:
             continue
-        
+
         nsrc += 1
         data = data.group_by(["obsid", "instrum"])
 
@@ -440,7 +478,7 @@ def stack_npixels(
                     mask = data_obs_order[f"band{eband}_flags"] == 0
 
                 src_stack[n, mask, i] = (
-                    data_obs_order[f"band{eband}_src_counts"][mask] / 
+                    data_obs_order[f"band{eband}_src_counts"][mask] /
                     data_obs_order["eef"][mask]
                 )
                 exp_stack[n, mask, i] = data_obs_order[f"band{eband}_exposure"][mask]
@@ -457,7 +495,7 @@ def stack_npixels(
 
                 else:
                     bkg_stack[n, mask, i] = (
-                        data_obs_order[f"band{eband}_bck_counts"][mask] / 
+                        data_obs_order[f"band{eband}_bck_counts"][mask] /
                         data_obs_order["eef"][mask]
                     )
 
@@ -507,7 +545,7 @@ def stack_npixels(
     bkg_stack = bkg_stack[:n, :, :]
     exp_stack = exp_stack[:n, :, :]
     ecf_stack = ecf_stack[:n, :]
-    
+
     if n < 2:
         return None, None, None, None, None, None, None
 
@@ -535,13 +573,15 @@ def stack_npixels(
         flux2_mad = np.sqrt(np.mean(cr_mad**2, axis=0)) / ecf / 1e11
 
     if with_plots:
-        plot_stack(sorted_neighbours["npixel"], hp, cr, snr, plotfile)
-    
+        scale = plot_stack(
+            sorted_neighbours["npixel"], hp, cr, snr, plotfile, scale
+        )
+
         plot_radial(
             sorted_neighbours["npixel"],
             level_neighbours,
             hp,
-            cr, 
+            cr,
             cr_mad,
             snr,
             snr_mad,
@@ -557,4 +597,4 @@ def stack_npixels(
     else:
         average_params = None
 
-    return flux, flux_mad, flux2, flux2_mad, average_params, n, nsrc
+    return flux, flux_mad, flux2, flux2_mad, average_params, scale, n, nsrc

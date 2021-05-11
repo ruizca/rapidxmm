@@ -8,7 +8,7 @@ import numpy as np
 from scipy.interpolate import RectBivariateSpline
 
 
-_ecf = np.load("./utils/ecf.npy", allow_pickle="TRUE").item()
+_ecf = np.load("api/stacking/ecf.npy", allow_pickle="TRUE").item()
 
 
 class ECF:
@@ -22,7 +22,7 @@ class ECF:
 
     def get_ecf(self, nh, gamma):
         lognh = np.log10(nh)
-        
+
         # Keep values of lognh and gamma between interpolation limits
         lognh = np.maximum(lognh, self._lognh_grid[0])
         lognh = np.minimum(lognh, self._lognh_grid[-1])
