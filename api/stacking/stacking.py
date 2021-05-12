@@ -49,26 +49,6 @@ def get_neighbours(npixel, hp, level=5):
     return sorted_neighbours
 
 
-def get_rapidxmm_data(npixels, obstype="pointed", instrum="PN", max_size=150):
-    kk = rapidxmm.query_npixels(
-        npixels, obstype=obstype, instrum=instrum
-    )
-    print(kk)
-    return
-
-    npixels_segments = np.split(
-        npixels, np.arange(max_size, len(npixels), max_size)
-    )
-
-    data = []
-    for npixels_segment in npixels_segments:
-        print(len(npixels_segment))
-        # data.append(
-        #    rapidxmm.query_npixels(
-        #     npixels_segment, obstype=obstype, instrum=instrum
-        # )
-
-
 def coords_random_kick(coords, moc=None, r_min=60*u.arcsec, r_max=120*u.arcsec):
     rng = np.random.default_rng()
 
