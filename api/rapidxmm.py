@@ -14,7 +14,7 @@ from pandas import DataFrame as df
 def _check_kwargs(obstype, instrum):
     if obstype not in ["slew", "pointed", None]:
         raise ValueError(f"Unknown obstype: {obstype}")
-        
+
     if instrum not in ["PN", "M1", "M2", None]:
         raise ValueError(f"Unknown instrum: {instrum}")
 
@@ -23,11 +23,11 @@ def _filter_uls(uls, obstype, instrum):
     if obstype:
         mask = uls["obstype"] == obstype
         uls = uls[mask]
-        
+
     if instrum:
         mask = uls["instrum"] == instrum
         uls = uls[mask]
-        
+
     return uls
 
 
@@ -50,8 +50,12 @@ def _query_xsa_uls(payload, obstype=None, instrum=None):
         "http://nxsa.esac.esa.int/nxsa-sl/servlet/get-uls", params=payload
     )
     r.raise_for_status()
-    
-    uls = Table.from_pandas(df.from_records(r.json()))
+
+    try:
+        uls = Table.from_pandas(df.from_records(r.json()))
+    except Exception:
+        print(r.text)
+
     if uls:
         uls = _filter_uls(uls, obstype, instrum)
 
@@ -76,7 +80,7 @@ def query_radec(ra, dec, **kwargs):
     Returns
     -------
     Astropy Table
-        An Astropy Table with the upper limit data for each observation 
+        An Astropy Table with the upper limit data for each observation
         containing the positions for the list of npixels.
 
     """
@@ -87,10 +91,10 @@ def query_radec(ra, dec, **kwargs):
         "ra": ";".join(str(round(c, 10)) for c in ra),
         "dec": ";".join(str(round(c, 10)) for c in dec),
     }
-    
+
     return _query_xsa_uls(payload, **kwargs)
-    
-    
+
+
 def query_coords(coords, **kwargs):
     """
     Search for upper limits at the coordinates defined by "coords"
@@ -106,7 +110,7 @@ def query_coords(coords, **kwargs):
     Returns
     -------
     Astropy Table
-        An Astropy Table with the upper limit data for each observation 
+        An Astropy Table with the upper limit data for each observation
         containing the positions for the list of npixels.
 
     """
@@ -114,7 +118,7 @@ def query_coords(coords, **kwargs):
         "ra": ";".join(str(round(c.ra.deg, 10)) for c in coords),
         "dec": ";".join(str(round(c.dec.deg, 10)) for c in coords),
     }
-    
+
     return _query_xsa_uls(payload, **kwargs)
 
 
@@ -122,14 +126,14 @@ def query_npixels(npixels, obstype="pointed", instrum=None):
     """
     Search for upper limits at the coordinates corresponding to "npixels", a
     list-like of integers corresponding to npixel values in the nested ordering
-    scheme. 
+    scheme.
 
     Parameters
     ----------
     npixels : TYPE
         DESCRIPTION.
     obstype : str, optional
-        The observation type ("pointed" or "slew"). For pointed observations 
+        The observation type ("pointed" or "slew"). For pointed observations
         npixels are assumed to use order=16, and order=15 for slew observations.
         The default is "pointed".
     instrum : str, optional
@@ -138,10 +142,10 @@ def query_npixels(npixels, obstype="pointed", instrum=None):
     Returns
     -------
     Astropy Table
-        An Astropy Table with the upper limit data for each observation 
+        An Astropy Table with the upper limit data for each observation
         containing the positions for the list of npixels.
     """
     level = _get_level(obstype)
     coords = _npixels_to_coords(npixels, level)
-    
+
     return query_coords(coords, obstype=obstype, instrum=instrum)

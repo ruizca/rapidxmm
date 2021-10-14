@@ -127,3 +127,12 @@ dmypy.json
 
 # Pyre type checker
 .pyre/
+
+# Paper notebooks
+flags_image.ipynb
+variable_sources.ipynb
+xxl_stacking_psfradial.ipynb
+
+# Paper test data
+data/
+!data/xxl.moc

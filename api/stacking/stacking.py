@@ -14,6 +14,8 @@ from astropy_healpix import HEALPix
 from matplotlib.collections import PatchCollection
 from matplotlib.colors import Normalize
 from matplotlib.patches import Polygon
+from mocpy import MOC
+from mocpy.mocpy import flatten_pixels
 from scipy.stats import median_abs_deviation
 from tqdm.auto import tqdm
 
@@ -25,6 +27,13 @@ plt.rc('font', family='serif')
 plt.rc('xtick', labelsize='x-small')
 plt.rc('ytick', labelsize='x-small')
 #plt.rc('text', usetex=True)
+plt.rcParams['mathtext.fontset'] = "stix"
+plt.rcParams['mathtext.rm'] = "STIXGeneral"
+plt.rcParams['font.family'] = "STIXGeneral"
+plt.rcParams["axes.formatter.use_mathtext"] = True
+
+# Numpy random  number generator
+rng = np.random.default_rng()
 
 
 def get_neighbours(npixel, hp, level=5):
@@ -49,84 +58,39 @@ def get_neighbours(npixel, hp, level=5):
     return sorted_neighbours
 
 
-def coords_random_kick(coords, moc=None, r_min=60*u.arcsec, r_max=120*u.arcsec):
-    rng = np.random.default_rng()
+def get_bkg_npixels(src_center, nside, npixels=100):
+    order = np.log2(nside).astype(int)
+    bkg_moc_outer = MOC.from_cone(src_center.ra, src_center.dec, 120*u.arcsec, order)
+    bkg_moc_inner = MOC.from_cone(src_center.ra, src_center.dec, 60*u.arcsec, order)
+    bkg_moc = bkg_moc_outer.difference(bkg_moc_inner)
+    bkg_npixels = flatten_pixels(bkg_moc._interval_set._intervals, order)
 
-    for _ in range(10):
-        # Random distance and angle
-        # Its faster generating 100 random points an later on select the first
-        # one that lies within the moc than generating individual points until
-        # we find one in the moc
-        r = r_min + (r_max - r_min) * rng.random(100)
-        a = 360 * rng.random(100) * u.deg
-
-        # Offset
-        dra = r * np.cos(a)  # arcsec
-        ddec = r * np.sin(a)  # arcsec
-
-        # Final random coordinates
-        rnd_dec = coords.dec + ddec
-        rnd_ra  = coords.ra + dra/np.cos(rnd_dec)
-
-        if moc is None:
-            mask = [True] * 100
-        else:
-            mask = moc.contains(rnd_ra, rnd_dec)
-
-        if np.any(mask):
-            rnd_coord = SkyCoord(rnd_ra[mask], rnd_dec[mask])[0]
-            break
-
-    else:
-        rnd_coord = None
-
-    return rnd_coord
+    return rng.choice(bkg_npixels, size=npixels, replace=False).tolist()
 
 
-def get_bkg_data(npixel, obsid, level_neighbours, moc_masked_sources, hp, ntries=20):
+def get_bkg_data(npixel, obsid, hp):
     src_center = hp.healpix_to_skycoord(npixel)
+    bkg_npixels = get_bkg_npixels(src_center, hp.nside, npixels=100)
 
-    for _ in range(ntries):
-        bkg_center = coords_random_kick(src_center, moc_masked_sources)
+    bkg_data = rapidxmm.query_npixels(
+        bkg_npixels, obstype="pointed", instrum="PN"
+    )
+    mask = bkg_data["obsid"] == obsid
+    bkg_data = bkg_data[mask]
 
-        if bkg_center is None:
-            # This means that we couldn't find a
-            # source-free position near the npixel
-            bkg_data = None
-            break
-
-        bkg_npixel = hp.skycoord_to_healpix(bkg_center)
-
-        bkg_sorted_neighbours = get_neighbours(
-            bkg_npixel, hp, level=level_neighbours
-        )
-        bkg_data = rapidxmm.query_npixels(
-            bkg_sorted_neighbours["npixel"], obstype="pointed", instrum="PN"
-        )
-
-        if len(bkg_data) == 0:
-            # No data for this position, we try again
-            # by generating a new random position
-            continue
-
-        mask = bkg_data["obsid"] == obsid
-        bkg_data = bkg_data[mask]
-
-        if len(bkg_data) == len(bkg_sorted_neighbours):
-            break
-
-    else:
-        # This means that we couldn't find a source-free region near the npixel
-        # having data for this observation and for all neighbours.
+    if len(bkg_data) < 15:
         bkg_data = None
 
     return bkg_data
-def stats_bootstrap(src, bkg, exp, ecf, nsim=1000):
+
+
+def stats_bootstrap(src, bkg, exp, eef, ecf, ac=None, nbkg=None, nsim=1000):
     # Calculate median and MAD for the stack using bootstraping
     nstack, npixels, nbands = src.shape
     cr = np.zeros((nsim, npixels, nbands))
     cr_err = np.zeros((nsim, npixels, nbands))
     snr = np.zeros((nsim, npixels, nbands))
+    texp = np.zeros((nsim, npixels, nbands))
     ecf_sample = np.zeros((nsim, nbands))
     # msrc = np.zeros((nsim, npixels, nbands))
     # mbkg = np.zeros((nsim, npixels, nbands))
@@ -134,31 +98,37 @@ def stats_bootstrap(src, bkg, exp, ecf, nsim=1000):
 
     for i in range(nsim):
         idx_sample = np.random.randint(nstack, size=nstack)
+
+        S = np.sum(src[idx_sample, :, :], axis=0)
+        B = np.sum(bkg[idx_sample, :, :], axis=0)
+        t = np.sum(exp[idx_sample, :, :], axis=0)
+
+        if ac is None:
+            Bcorr = np.sum(bkg[idx_sample, :, :] / nbkg[idx_sample, :, :], axis=0)
+            ac = np.ones_like(bkg)
+        else:
+            Bcorr = np.sum(ac[idx_sample, :, :] * bkg[idx_sample, :, :], axis=0)
+
         cr[i, :, :] = (
-            (
-                np.sum(src[idx_sample, :, :], axis=0) -
-                np.sum(bkg[idx_sample, :, :], axis=0)
-            ) / np.sum(exp[idx_sample, :, :], axis=0)
-        )
-        cr_err[i, :, :] = (
-            np.sqrt(
-                np.sum(src[idx_sample, :, :] + bkg[idx_sample, :, :], axis=0)
-            ) / np.sum(exp[idx_sample, :, :], axis=0)
-        )
-        snr[i, :, :] = (
-            (
-                np.sum(src[idx_sample, :, :], axis=0) -
-                np.sum(bkg[idx_sample, :, :], axis=0)
-            ) / np.sqrt(np.sum(src[idx_sample, :, :], axis=0))
-        )
+            np.sum(src[idx_sample, :, :] / eef[idx_sample, :, :], axis=0) -
+            np.sum(bkg[idx_sample, :, :] / eef[idx_sample, :, :], axis=0)
+        ) / t
+        cr_err[i, :, :] = np.sqrt(
+            np.sum(src[idx_sample, :, :] / eef[idx_sample, :, :]**2, axis=0) +
+            np.sum(ac[idx_sample, :, :] * bkg[idx_sample, :, :] / eef[idx_sample, :, :]**2, axis=0)
+        ) / t
+        snr[i, :, :] = (S - B) / np.sqrt(S + Bcorr)
+        #snr[i, :, :] = cr[i, :, :] / cr_err[i, :, :]
         ecf_sample[i, :] = np.mean(ecf[idx_sample, :], axis=0)
         # msrc[i, :, :] = np.sum(src[idx_sample, :, :], axis=0)
         # mbkg[i, :, :] = np.sum(bkg[idx_sample, :, :], axis=0)
         # mexp[i, :, :] = np.sum(exp[idx_sample, :, :], axis=0)
+        texp[i, :, :] = t
 
     cr_median = np.nanmedian(cr, axis=0)
     snr_median = np.nanmedian(snr, axis=0)
     ecf_median = np.nanmedian(ecf_sample, axis=0)
+    texp_median = np.nanmedian(texp, axis=0)
     #cr_median = np.mean(cr, axis=0)
     #snr_median = np.mean(snr, axis=0)
 
@@ -176,7 +146,7 @@ def stats_bootstrap(src, bkg, exp, ecf, nsim=1000):
         cr_mad[:, i] = median_abs_deviation(cr[:, :, i], axis=0, nan_policy="omit", scale="normal")
         snr_mad[:, i] = median_abs_deviation(snr[:, :, i], axis=0, nan_policy="omit", scale="normal")
 
-    return cr_median, cr_mad, snr_median, snr_mad, ecf_median
+    return cr_median, cr_mad, snr_median, snr_mad, ecf_median, texp_median
 
 
 def flux_bootstrap(src_flux, src_flux_err, bkg_flux, bkg_flux_err, nsim=1000):
@@ -212,7 +182,7 @@ def flux_bootstrap(src_flux, src_flux_err, bkg_flux, bkg_flux_err, nsim=1000):
     return flux_median, flux_mad
 
 
-def print_stats(cr, cr_err, snr, snr_err, flux, flux_err, ebands=["6", "7", "8"]):
+def print_stats(cr, cr_err, snr, snr_err, texp, flux, flux_err, ebands=["6", "7", "8"]):
     color_print("\nStatistics", "yellow")
     color_print("----------", "yellow")
 
@@ -220,6 +190,8 @@ def print_stats(cr, cr_err, snr, snr_err, flux, flux_err, ebands=["6", "7", "8"]
         idx_max = np.argmax(cr[:, i])
         cr_peak = cr[idx_max, i]
         cr_peak_mad = cr_err[idx_max, i]
+        
+        texp_peak = texp[idx_max, i]
 
         idx_max = np.argmax(snr[:, i])
         snr_peak = snr[idx_max, i]
@@ -227,6 +199,7 @@ def print_stats(cr, cr_err, snr, snr_err, flux, flux_err, ebands=["6", "7", "8"]
 
         color_print(f"Energy band {eband}:", "white")
         print(f"Median net CR at peak: {cr_peak:.01e} ± {cr_peak_mad:.01e} counts/s")
+        print(f"Median exposure time at peak: {texp_peak:.01e} s")
 
         if flux is not None:
             f, ferr = flux[i], flux_err[i]
@@ -340,6 +313,14 @@ def plot_radial(npixels, level, hp, cr, cr_err, snr, snr_err, filename=None):
     snr_min = np.nanmin(snr_radial - 1.1*snr_err_radial)
     snr_max = np.nanmax(snr_radial + 1.1*snr_err_radial)
 
+    # filename_npz = filename.parent.joinpath(filename.stem + "_radial.npz")
+    # np.savez(
+    #     filename_npz,
+    #     cr_radial=cr_radial,
+    #     cr_err_radial=cr_err_radial,
+    #     snr_radial=snr_radial,
+    #     snr_err_radial=snr_err_radial,
+    # )
 
     fig, axs = plt.subplots(
         2, 3, sharex=True, constrained_layout=False, figsize=(5.5, 3.5)
@@ -350,7 +331,10 @@ def plot_radial(npixels, level, hp, cr, cr_err, snr, snr_err, filename=None):
         )
         axs[0, i].set_title(f"Energy band {eband}", size="x-small")
         axs[0, i].set_ylim(cr_min, cr_max)
-        axs[0, i].ticklabel_format(axis="y", style="sci", scilimits=(0,0))
+        axs[0, i].ticklabel_format(
+            axis="y", style="sci", scilimits=(0,0), useMathText=True
+        )
+        axs[0, i].xaxis.offsetText.set_fontsize(8)
         axs[0, i].grid(color='gray', linestyle=':')
 
         axs[1, i].errorbar(
@@ -404,6 +388,9 @@ def stack_npixels(
     src_stack = np.zeros((max_data, num_neighbours, len(ebands)))
     bkg_stack = np.zeros((max_data, num_neighbours, len(ebands)))
     exp_stack = np.zeros((max_data, num_neighbours, len(ebands)))
+    eef_stack = np.ones((max_data, num_neighbours, len(ebands)))
+    ac_stack = np.zeros((max_data, num_neighbours, len(ebands)))
+    npixels_bkg_stack = np.ones((max_data, num_neighbours, len(ebands)))
     ecf_stack = np.zeros((max_data, len(ebands)))
 
     if calc_flux:
@@ -420,9 +407,6 @@ def stack_npixels(
     n, nsrc = 0, 0
     for j, npixel in enumerate(tqdm(npixels)):
         sorted_neighbours = get_neighbours(npixel, hp, level=level_neighbours)
-        # data = get_rapidxmm_data(
-        #     sorted_neighbours["npixel"], obstype="pointed", instrum="PN"
-        # )
         data = rapidxmm.query_npixels(
             sorted_neighbours["npixel"], obstype="pointed", instrum="PN"
         )
@@ -444,7 +428,7 @@ def stack_npixels(
                     continue
 
             if custom_bkg:
-                bkg_data = get_bkg_data(npixel, group["obsid"][0], level_neighbours, moc_masked_sources, hp)
+                bkg_data = get_bkg_data(npixel, group["obsid"][0], hp)
 
                 if bkg_data is None:
                     # We couldn't find a good background region for this npixel,
@@ -457,27 +441,20 @@ def stack_npixels(
                 else:
                     mask = data_obs_order[f"band{eband}_flags"] == 0
 
-                src_stack[n, mask, i] = (
-                    data_obs_order[f"band{eband}_src_counts"][mask] /
-                    data_obs_order["eef"][mask]
-                )
+                src_stack[n, mask, i] = data_obs_order[f"band{eband}_src_counts"][mask]
                 exp_stack[n, mask, i] = data_obs_order[f"band{eband}_exposure"][mask]
+                eef_stack[n, mask, i] = data_obs_order["eef"][mask]
+                ac_stack[n, mask, i] = data_obs_order["area_ratio"][mask]
 
                 if custom_bkg:
                     mask_bkg = bkg_data[f"band{eband}_flags"] == 0
 
                     # The same average bkg value is assigned to all npixels in the detection
-                    bkg_counts = (
-                        bkg_data[f"band{eband}_bck_counts"][mask_bkg]
-                        / bkg_data["eef"][mask_bkg]
-                    )
+                    bkg_counts = bkg_data[f"band{eband}_bck_counts"][mask_bkg]
                     bkg_stack[n, mask, i] = np.mean(bkg_counts)
-
+                    npixels_bkg_stack[n, mask, i] = len(bkg_counts)
                 else:
-                    bkg_stack[n, mask, i] = (
-                        data_obs_order[f"band{eband}_bck_counts"][mask] /
-                        data_obs_order["eef"][mask]
-                    )
+                    bkg_stack[n, mask, i] = data_obs_order[f"band{eband}_bck_counts"][mask]
 
                 if calc_flux and np.any(mask):
                     ecf_stack[n, i] = ecf_pn[eband][group["filt"][0]].get_ecf(params["NHGAL"][j], 1.9)
@@ -526,11 +503,20 @@ def stack_npixels(
     exp_stack = exp_stack[:n, :, :]
     ecf_stack = ecf_stack[:n, :]
 
+    if custom_bkg:
+        # No need to take into account the area correction when using custom
+        # backgrounds, since counts are extracted in regions with the same size
+        ac_stack = None
+        npixels_bkg_stack = npixels_bkg_stack[:n, :]
+    else:
+        ac_stack = ac_stack[:n, :]
+        npixels_bkg_stack = None
+
     if n < 2:
         return None, None, None, None, None, None, None
 
-    cr, cr_mad, snr, snr_mad, ecf = stats_bootstrap(
-        src_stack, bkg_stack, exp_stack, ecf_stack, nsim=1000
+    cr, cr_mad, snr, snr_mad, ecf, texp = stats_bootstrap(
+        src_stack, bkg_stack, exp_stack, eef_stack, ecf_stack, ac_stack, npixels_bkg_stack, nsim=1000
     )
 
     flux, flux_mad = None, None
@@ -569,7 +555,7 @@ def stack_npixels(
         )
 
     print_stats(
-        cr, cr_mad, snr, snr_mad, flux, flux_mad
+        cr, cr_mad, snr, snr_mad, texp, flux, flux_mad
     )
 
     if params:
